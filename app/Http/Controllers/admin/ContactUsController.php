@@ -1,0 +1,151 @@
+<?php
+
+namespace App\Http\Controllers\admin;
+
+use App\Http\Controllers\Controller;
+use Illuminate\Http\Request;
+use App\Models\ContactUs;
+use App\Mail\ContactFormMail;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
+
+class ContactUsController extends Controller
+{
+    /**
+     * Display a listing of the resource.
+     *
+     * @return \Illuminate\Http\Response
+     */
+
+
+    public function index(Request $request)
+    {
+        if ($request->ajax() || $request->wantsJson()) {
+            $query = ContactUs::orderby('id', 'desc')->where('id', '>', 0);
+            $search = $request->input('search', '');
+            if ($search !== '' && $search !== null && $search !== 'undefined') {
+                $query->where(function ($q) use ($search) {
+                    $q->where('first_name', 'like', '%' . $search . '%')
+                        ->orWhere('last_name', 'like', '%' . $search . '%')
+                        ->orWhere('email', 'like', '%' . $search . '%')
+                        ->orWhere('phone', 'like', '%' . $search . '%')
+                        ->orWhere('message', 'like', '%' . $search . '%');
+                });
+            }
+            $status = $request->input('status', 'All');
+            if ($status !== 'All' && $status !== '' && $status !== 'undefined' && in_array((string) $status, ['0', '1', '2'])) {
+                $statusVal = ($status == '2') ? 0 : (int) $status;
+                $query->where('status', $statusVal);
+            }
+            $models = $query->paginate(10);
+            return (string) view('admin.contact_us.search', compact('models'));
+        }
+
+        $page_title = 'All Contact Me';
+        $totalContacts = ContactUs::count();
+        $models = ContactUs::orderby('id', 'desc')->paginate(10);
+        return view('admin.contact_us.index', compact('page_title', 'models', 'totalContacts'));
+    }
+
+    /**
+     * Show the form for creating a new resource.
+     *
+     * @return \Illuminate\Http\Response
+     */
+    public function create()
+    {
+        //
+    }
+
+    /**
+     * Display the specified resource.
+     *
+     * @param  int  $id
+     * @return \Illuminate\Http\Response
+     */
+    public function show($id)
+    {
+        $model = ContactUs::findOrFail($id);
+        return view('admin.contact_us.show', compact('model'));
+    }
+
+    /**
+     * Store a newly created resource in storage.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return \Illuminate\Http\Response
+     */
+    public function store(Request $request)
+    {
+        $request->validate([
+            'full_name' => 'required|string|max:200',
+            'email' => 'required|email|max:100',
+            'phone' => 'nullable|string|max:50',
+            'venue_event' => 'nullable|string|max:255',
+            'message' => 'required|string|max:2000',
+        ]);
+
+        $fullName = trim($request->full_name);
+        $parts = preg_split('/\s+/', $fullName, 2);
+        $firstName = $parts[0] ?? $fullName;
+        $lastName = $parts[1] ?? '';
+
+        $model = new ContactUs();
+        $model->first_name = $firstName;
+        $model->last_name = $lastName;
+        $model->email = $request->email;
+        $model->phone = $request->phone ?? '';
+        $model->address = $request->venue_event;
+        $model->message = $request->message;
+        $model->save();
+
+        $contactData = [
+            'full_name' => $fullName,
+            'first_name' => $firstName,
+            'last_name' => $lastName,
+            'email' => $request->email,
+            'phone' => $request->phone,
+            'venue_event' => $request->venue_event,
+            'message' => $request->message,
+        ];
+
+        // Always send contact form notification to admin
+        $adminEmail = 'asjadmmc67@gmail.com';
+        try {
+            Mail::to($adminEmail)->send(new ContactFormMail($contactData));
+            Log::info('Contact form email sent to ' . $adminEmail);
+        } catch (\Exception $e) {
+            Log::error('Contact form email failed', [
+                'to' => $adminEmail,
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+        }
+
+        if ($request->ajax() || $request->wantsJson()) {
+            return response()->json([
+                'success' => true,
+                'message' => 'Thank you for contacting us! We will get back to you soon.'
+            ]);
+        }
+
+        return redirect()->back()->with('status', 'Your message has been sent. Thank you!');
+    }
+
+    /**
+     * Remove the specified resource from storage.
+     *
+     * @param  \App\Models\Career  $career
+     * @return \Illuminate\Http\Response
+     */
+    public function destroy($id)
+    {
+        $model = ContactUs::where('id', $id)->first();
+        if ($model) {
+            $model->delete();
+            return true;
+        } else {
+            return response()->json(['message' => 'Failed '], 404);
+        }
+    }
+}
